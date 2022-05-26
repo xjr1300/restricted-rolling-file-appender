@@ -1,14 +1,14 @@
 //! Limited Rolling File Appender
-//! 
+//!
 //! ----------------------------------------------------------------------------
-//! 
+//!
 //! このクレートには、`LRFAppender(Limited Rolling File Appender)`構造体が
 //! 含まれており、この構造体は、ログを記録することを目的としている。
 //! `LRFAppender`は、`tracing`クレートの`tracing_appender::rolling::RollingFileAppender
 //! を内部にもち（合成）、多くの処理を`RollingFileAppender`に移譲している。
-//! 
-//! `LRFAppender`は、以下いずれかの条件で、ログの記録を新しいファイルに切り替える。 
-//! 
+//!
+//! `LRFAppender`は、以下いずれかの条件で、ログの記録を新しいファイルに切り替える。
+//!
 //! - 日付が変わったとき
 //! - ファイルに指定されたサイズのログを出力したとき
 //!
