@@ -225,7 +225,7 @@ fn create_daily_log_filename(filename_prefix: &str, date: &Date) -> String {
     let month: u8 = date.month().into();
 
     format!(
-        "{}-{}{}{}.log",
+        "{}-{:04}{:02}{:02}.log",
         filename_prefix,
         date.year(),
         month,
