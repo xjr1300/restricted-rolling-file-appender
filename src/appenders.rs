@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    fs::{self, DirEntry, File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     time::SystemTime,
@@ -65,6 +65,11 @@ impl DailyRollingFileAppender {
         let (state, writer) = Inner::new(date, max_count, directory, filename_prefix);
 
         Self { state, writer }
+    }
+
+    #[cfg(test)]
+    fn inner(&self) -> &Inner {
+        &self.state
     }
 }
 
@@ -414,6 +419,87 @@ mod tests {
         let today_name = create_daily_log_filename(filename_prefix, &today);
         let today_path = create_daily_log_path(directory.path(), &today_name);
         assert!(find_str_in_log_file(Path::new(&today_path), expected_value));
+
+        directory
+            .close()
+            .expect("Failed to explicitly close TempDir. TempDir should delete once out of scope.")
+    }
+
+    fn find_files(directory: impl AsRef<Path>) -> Vec<DirEntry> {
+        fs::read_dir(directory)
+            .unwrap()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                if entry.file_type().ok()?.is_file() {
+                    Some(entry)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_remove_old_files() {
+        let prefix = "foo";
+        // 今日の10日前までのログファイルの名前を生成
+        // 今日のマイナス1日から、マイナス10日までのログファイルの名前を生成
+        let today = today();
+        let mut date = today.clone();
+        let log_names: Vec<String> = (0..10)
+            .map(|_| {
+                date = date.previous_day().unwrap();
+                create_daily_log_filename(&prefix, &date)
+            })
+            .collect();
+
+        // ログファイルでないファイル
+        let others = vec![
+            "bar.txt".to_owned(),
+            "bar-20220527.log".to_owned(),
+            format!("{}-00000101.txt", prefix),
+            format!("{}-0000010a.txt", prefix),
+        ];
+
+        // 上記ファイルを作成
+        let directory = tempfile::tempdir().expect("failed to create temp dir");
+        println!("appender dir: {}", directory.path().to_string_lossy());
+        let filenames: Vec<_> = log_names.iter().chain(others.iter()).collect();
+        for name in filenames {
+            let _ = std::fs::File::create(directory.path().join(name));
+        }
+        // 上記ファイルが作成されたか確認
+        let files = find_files(directory.path());
+        assert_eq!(
+            files.len(),
+            log_names.len() + others.len(),
+            "Couldn't create test log files"
+        );
+
+        // 今日を含めて3つのログファイルを残す、アペンダーを作成して、ログを出力
+        let appender = DailyRollingFileAppender::new(3, directory.path(), "foo");
+        appender.inner().remove_old_files();
+
+        // ログを出力するディレクトリに存在するファイルを検索
+        let files = find_files(directory.path());
+        let filenames: Vec<_> = files
+            .iter()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        // 今日と今日から2日前までのログファイルが存在することを確認
+        assert!(filenames.contains(&create_daily_log_filename(&prefix, &today)));
+        for filename in &log_names[0..2] {
+            assert!(filenames.contains(filename));
+        }
+        // 今日から3日前以降のログファイルが存在しないことを確認
+        for filename in &log_names[3..] {
+            assert!(!filenames.contains(filename));
+        }
+        // ログファイルでないファイルが存在することを確認
+        for filename in &others {
+            assert!(filenames.contains(filename));
+        }
 
         directory
             .close()
