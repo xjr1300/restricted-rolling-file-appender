@@ -16,7 +16,7 @@ use crate::sync::{RwLock, RwLockReadGuard};
 /// ファイルを別のファイルに切り替える。
 /// また、別のファイルに切り替えたとき、ログファイルの数が保存するファイルの数より多くなった場合、
 /// 最も古いファイルから削除する。
-pub struct LimitedRollingFileAppender {
+pub struct DailyRollingFileAppender {
     state: Inner,
     writer: RwLock<File>,
 }
@@ -31,8 +31,8 @@ struct Inner {
     filename_prefix: String,
 }
 
-impl LimitedRollingFileAppender {
-    /// `LRFAppender`を作成する。
+impl DailyRollingFileAppender {
+    /// `DailyRollingFileAppender`を作成する。
     ///
     /// # Arguments
     ///
@@ -47,7 +47,7 @@ impl LimitedRollingFileAppender {
         max_count: usize,
         directory: impl AsRef<Path>,
         filename_prefix: impl AsRef<Path>,
-    ) -> LimitedRollingFileAppender {
+    ) -> DailyRollingFileAppender {
         let today = today();
         let (state, writer) = Inner::new(today, max_count, directory, filename_prefix);
 
@@ -55,7 +55,7 @@ impl LimitedRollingFileAppender {
     }
 }
 
-impl io::Write for LimitedRollingFileAppender {
+impl io::Write for DailyRollingFileAppender {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let writer = self.writer.get_mut();
         if let Some(today) = self.state.should_rollover() {
@@ -70,7 +70,7 @@ impl io::Write for LimitedRollingFileAppender {
     }
 }
 
-impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for LimitedRollingFileAppender {
+impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for DailyRollingFileAppender {
     type Writer = RollingWriter<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
