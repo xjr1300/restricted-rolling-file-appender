@@ -365,7 +365,6 @@ mod tests {
         for entry in dir_contents {
             let path = entry.expect("Expected dir entry").path();
             let file = fs::read_to_string(&path).expect("Failed to read file");
-            println!("path={}\nfile={:?}", path.display(), file);
 
             if file.as_str() == expected_value {
                 return true;
@@ -377,7 +376,6 @@ mod tests {
 
     fn find_str_in_log_file(path: &Path, expected_value: &str) -> bool {
         let file = fs::read_to_string(&path).expect("Failed to read file");
-        println!("path={}\nfile={:?}", path.display(), file);
 
         file.as_str() == expected_value
     }
@@ -463,10 +461,8 @@ mod tests {
 
         // 上記ファイルを作成
         let directory = tempfile::tempdir().expect("failed to create temp dir");
-        println!("appender dir: {}", directory.path().to_string_lossy());
-        let filenames: Vec<_> = log_names.iter().chain(others.iter()).collect();
-        for name in filenames {
-            let _ = std::fs::File::create(directory.path().join(name));
+        for filename in log_names.iter().chain(others.iter()) {
+            std::fs::File::create(directory.path().join(filename)).unwrap();
         }
         // 上記ファイルが作成されたか確認
         let files = find_files(directory.path());
