@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-time = { version = "0.3", features = ["local-offset", "parsing", "formatting"] }
+time = { version = "0.3", features = ["parsing", "formatting"] }
 tracing-subscriber = "0.3"
 regex = "1.5"
+
+[dev-dependencies]
+tempfile = "3.3"

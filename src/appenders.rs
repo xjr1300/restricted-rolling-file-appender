@@ -3,6 +3,7 @@ use std::{
     fs::{self, DirEntry, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use regex::Regex;
@@ -202,7 +203,8 @@ fn is_log_file(entry: DirEntry, prefix: &str) -> Option<DirEntry> {
 ///
 /// 本日の日付（時刻はすべて0）。
 fn today() -> Date {
-    let now = OffsetDateTime::now_local().expect("Unable to retrieve today at local time");
+    let now = SystemTime::now();
+    let now = OffsetDateTime::from(now);
 
     now.date()
 }
