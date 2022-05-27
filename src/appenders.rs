@@ -339,6 +339,13 @@ mod tests {
         false
     }
 
+    fn find_str_in_log_file(path: &Path, expected_value: &str) -> bool {
+        let file = fs::read_to_string(&path).expect("Failed to read file");
+        println!("path={}\nfile={:?}", path.display(), file);
+
+        file.as_str() == expected_value
+    }
+
     #[test]
     fn test_write_log() {
         let directory = tempfile::tempdir().expect("failed to create temp dir");
@@ -353,6 +360,29 @@ mod tests {
             .expect("Failed to explicitly close TempDir. TempDir should delete once out of scope.")
     }
 
+    #[test]
+    fn test_rolling_file() {
+        // 昨日の日付でアペンダーを作成
+        let directory = tempfile::tempdir().expect("failed to create temp dir");
+        let filename_prefix = "foo";
+        let today = today();
+        let yesterday = today.previous_day().unwrap();
+        let mut appender =
+            DailyRollingFileAppender::new_test(3, directory.path(), filename_prefix, yesterday);
+
+        // ログを出力
+        let expected_value = "Hello";
+        write_to_log(&mut appender, expected_value);
+
+        // 昨日のログファイルにはログが記録されていないはず
+        let yesterday_name = create_daily_log_filename(filename_prefix, &yesterday);
+        let yesterday_path = create_daily_log_path(directory.path(), &yesterday_name);
+        assert!(find_str_in_log_file(Path::new(&yesterday_path), ""));
+
+        // 今日のログファイルにはログが記録されているはず
+        let today_name = create_daily_log_filename(filename_prefix, &today);
+        let today_path = create_daily_log_path(directory.path(), &today_name);
+        assert!(find_str_in_log_file(Path::new(&today_path), expected_value));
 
         directory
             .close()
