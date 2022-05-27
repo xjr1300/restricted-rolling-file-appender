@@ -276,9 +276,8 @@ fn create_writer(directory: &Path, filename_prefix: &str, date: &Date) -> io::Re
 
 #[cfg(test)]
 mod tests {
-    use time::format_description;
-
     use super::*;
+    use time::format_description;
 
     #[test]
     fn test_create_daily_log_filename() {
@@ -291,5 +290,42 @@ mod tests {
 
         let path = create_daily_log_filename(filename_prefix, &date);
         assert_eq!(expected, path);
+    }
+
+    fn write_to_log(appender: &mut DailyRollingFileAppender, msg: &str) {
+        appender
+            .write_all(msg.as_bytes())
+            .expect("Failed to write to appender");
+        appender.flush().expect("Failed to flush!");
+    }
+
+    fn find_str_in_log(dir_path: &Path, expected_value: &str) -> bool {
+        let dir_contents = fs::read_dir(dir_path).expect("Failed to read directory");
+
+        for entry in dir_contents {
+            let path = entry.expect("Expected dir entry").path();
+            let file = fs::read_to_string(&path).expect("Failed to read file");
+            println!("path={}\nfile={:?}", path.display(), file);
+
+            if file.as_str() == expected_value {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    #[test]
+    fn test_write_log() {
+        let directory = tempfile::tempdir().expect("failed to create temp dir");
+        let mut appender = DailyRollingFileAppender::new(3, directory.path(), "foo");
+
+        let expected_value = "Hello";
+        write_to_log(&mut appender, expected_value);
+        assert!(find_str_in_log(directory.path(), expected_value));
+
+        directory
+            .close()
+            .expect("Failed to explicitly close TempDir. TempDir should delete once out of scope.")
     }
 }
