@@ -87,10 +87,10 @@ impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for DailyRollingFileApp
     type Writer = RollingWriter<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        // Should we try to roll over the log file?
         if let Some(today) = self.state.should_rollover() {
             self.state.refresh_writer(&today, &mut *self.writer.write());
         }
+
         RollingWriter(self.writer.read())
     }
 }
@@ -167,23 +167,33 @@ impl Inner {
     }
 
     /// 古いファイルを削除する。
+    ///
+    /// ディレクトリに存在するログファイルを正規表現を利用して取得する。
+    /// 取得したフォルファイルをのファイル名をベクタに格納する。
+    /// その後、ベクタの要素をファイル名の昇順で並べ替える。
+    /// ログファイルの書式から、過去のログファイルの順にログファイル名が並んでいるため、
+    /// ベクタの先頭から保管するログファイルの数になるまで、ログファイルを削除する。
     fn remove_old_files(&self) {
         let targets = fs::read_dir(&self.directory);
         if let Err(err) = targets {
             eprintln!("Couldn't find log files: {}", err);
             return;
         }
-        let targets = targets.unwrap();
-        let mut targets: Vec<DirEntry> = targets
+
+        let mut targets: Vec<String> = targets
+            .unwrap()
             .filter_map(|entry| match entry {
-                Ok(entry) => is_log_file(entry, &self.filename_prefix),
+                Ok(entry) => {
+                    is_log_file(&entry.file_name().to_string_lossy(), &self.filename_prefix)
+                }
                 Err(_) => None,
             })
             .collect();
+
         if self.max_count < targets.len() {
-            targets.sort_by(|a, b| a.file_name().cmp(&b.file_name()).reverse());
+            targets.sort();
             for target in &targets[..(targets.len() - self.max_count)] {
-                if let Err(err) = std::fs::remove_file(target.path()) {
+                if let Err(err) = std::fs::remove_file(self.directory.join(target)) {
                     eprintln!("Couldn't remove log file: {}", err);
                 }
             }
@@ -201,20 +211,12 @@ impl Inner {
 /// # 戻り値
 ///
 /// ログファイルの場合はそのディレクトリエントリ。ログファイルでない場合はNone。
-fn is_log_file(entry: DirEntry, prefix: &str) -> Option<DirEntry> {
-    if entry.file_type().is_err() {
-        return None;
-    }
-    if !entry.file_type().unwrap().is_file() {
-        return None;
-    }
-
+fn is_log_file(filename: &str, prefix: &str) -> Option<String> {
     let pattern = format!(r"^{}-\d{{8}}.log$", prefix);
     let re = Regex::new(&pattern).unwrap();
 
-    let file_name: String = entry.file_name().to_string_lossy().into();
-    match re.is_match(&file_name) {
-        true => Some(entry),
+    match re.is_match(filename) {
+        true => Some(filename.to_owned()),
         false => None,
     }
 }
@@ -301,7 +303,36 @@ fn create_writer(directory: &Path, filename_prefix: &str, date: &Date) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::DirEntry;
     use time::format_description;
+
+    #[test]
+    fn test_is_log_file() {
+        let prefix = "foo";
+
+        let log_filenames = vec!["foo-00000000.log", "foo-20220527.log"];
+        for filename in log_filenames {
+            assert!(
+                is_log_file(filename, prefix).is_some(),
+                "filename={}",
+                filename
+            );
+        }
+
+        let not_log_filenames = vec![
+            "foo.log",
+            "20220527.log",
+            "foo-2022052a.log",
+            "foo-20220527.txt",
+        ];
+        for filename in not_log_filenames {
+            assert!(
+                is_log_file(filename, prefix).is_none(),
+                "filename={}",
+                filename
+            );
+        }
+    }
 
     #[test]
     fn test_create_daily_log_filename() {
