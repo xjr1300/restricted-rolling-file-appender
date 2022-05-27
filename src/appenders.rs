@@ -323,7 +323,7 @@ mod tests {
         appender.flush().expect("Failed to flush!");
     }
 
-    fn find_str_in_log(dir_path: &Path, expected_value: &str) -> bool {
+    fn find_str_in_log_files(dir_path: &Path, expected_value: &str) -> bool {
         let dir_contents = fs::read_dir(dir_path).expect("Failed to read directory");
 
         for entry in dir_contents {
@@ -346,7 +346,13 @@ mod tests {
 
         let expected_value = "Hello";
         write_to_log(&mut appender, expected_value);
-        assert!(find_str_in_log(directory.path(), expected_value));
+        assert!(find_str_in_log_files(directory.path(), expected_value));
+
+        directory
+            .close()
+            .expect("Failed to explicitly close TempDir. TempDir should delete once out of scope.")
+    }
+
 
         directory
             .close()
