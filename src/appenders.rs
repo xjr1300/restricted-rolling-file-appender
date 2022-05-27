@@ -48,9 +48,21 @@ impl DailyRollingFileAppender {
         max_count: usize,
         directory: impl AsRef<Path>,
         filename_prefix: impl AsRef<Path>,
-    ) -> DailyRollingFileAppender {
+    ) -> Self {
         let today = today();
         let (state, writer) = Inner::new(today, max_count, directory, filename_prefix);
+
+        Self { state, writer }
+    }
+
+    #[cfg(test)]
+    fn new_test(
+        max_count: usize,
+        directory: impl AsRef<Path>,
+        filename_prefix: impl AsRef<Path>,
+        date: Date,
+    ) -> Self {
+        let (state, writer) = Inner::new(date, max_count, directory, filename_prefix);
 
         Self { state, writer }
     }
@@ -179,6 +191,16 @@ impl Inner {
     }
 }
 
+/// ディレクトリエントリがログファイルであるか確認する。
+///
+/// # 引数
+///
+/// - entry: ディレクトリエントリ。
+/// - prefix: ログファイルの接頭語。
+///
+/// # 戻り値
+///
+/// ログファイルの場合はそのディレクトリエントリ。ログファイルでない場合はNone。
 fn is_log_file(entry: DirEntry, prefix: &str) -> Option<DirEntry> {
     if entry.file_type().is_err() {
         return None;
@@ -251,7 +273,9 @@ fn create_daily_log_path(directory: &Path, filename: &str) -> String {
 ///
 /// # 引数
 ///
-/// * path: ログファイルパス。
+/// - path: ログファイルディレクトリのパス。
+/// - filename_prefix: ログファイルの接頭語。
+/// - date: ログファイルの日付。
 ///
 /// # 戻り値
 ///
