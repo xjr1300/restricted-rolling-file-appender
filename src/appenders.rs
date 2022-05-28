@@ -3,11 +3,11 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    time::SystemTime,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use regex::Regex;
-use time::{Date, OffsetDateTime};
+use time::{Date, OffsetDateTime, Time};
 
 use crate::sync::{RwLock, RwLockReadGuard};
 
@@ -43,7 +43,7 @@ impl DailyRollingFileAppender {
     ///
     /// # Returns
     ///
-    /// `LRFAppender`インスタンス。
+    /// `DailyRollingFileAppender`インスタンス。
     pub fn new(
         max_count: usize,
         directory: impl AsRef<Path>,
@@ -226,16 +226,17 @@ fn is_log_file(filename: &str, prefix: &str) -> Option<String> {
     }
 }
 
-/// 本日の日付を取得して、返却する。
+/// 現在日時を取得して、その日のUnixタイムスタンプを返却する。
 ///
 /// # 戻り値
 ///
-/// 本日の日付（時刻はすべて0）。
-fn today() -> Date {
-    let now = SystemTime::now();
-    let now = OffsetDateTime::from(now);
+/// 今日の0時のUnixタイムスタンプ。
+fn today() -> OffsetDateTime {
+    let time = Time::from_hms(0, 0, 0)
+        .expect("Invalid time; this is a bug in restricted-rolling-file-appender");
 
-    now.date()
+    OffsetDateTime::now_utc()
+        .replace_time(time)
 }
 
 /// 日毎にローテーションするログファイルの名前を作成して、返却する。
