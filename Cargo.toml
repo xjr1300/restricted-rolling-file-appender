@@ -1,5 +1,5 @@
 [package]
-name = "limited-rolling-file-appender"
+name = "restricted-rolling-file-appender"
 version = "0.1.0"
 edition = "2021"
 
