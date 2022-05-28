@@ -1,3 +1,6 @@
+//! This file is a copy of https://github.com/tokio-rs/tracing/blob/master/tracing-appender/src/sync.rs.
+//! The commit is `6dd9d23`.
+
 //! Abstracts over sync primitive implementations.
 //!
 //! Optionally, we allow the Rust standard library's `RwLock` to be replaced
