@@ -7,7 +7,7 @@ use std::{
 };
 
 use regex::Regex;
-use time::{Date, OffsetDateTime, Time};
+use time::{Duration, OffsetDateTime, Time};
 
 use crate::sync::{RwLock, RwLockReadGuard};
 
@@ -26,7 +26,7 @@ pub struct DailyRollingFileAppender {
 pub struct RollingWriter<'a>(RwLockReadGuard<'a, File>);
 
 struct Inner {
-    current_date: Date,
+    next_date: AtomicUsize,
     max_count: usize,
     directory: PathBuf,
     filename_prefix: String,
@@ -39,7 +39,7 @@ impl DailyRollingFileAppender {
     ///
     /// * directory: ファイルを作成するディレクトリ。
     /// * file_name_prefix: ファイル名の接頭語。
-    /// * max_count: 残す最大ファイル数。
+    /// * max_count: 現在ログを出力しているファイルを除いて、保存するファイルの最大数。
     ///
     /// # Returns
     ///
@@ -55,12 +55,24 @@ impl DailyRollingFileAppender {
         Self { state, writer }
     }
 
+    /// 単体テスト用に、`DailyRollingFileAppender`を作成する。
+    ///
+    /// # Arguments
+    ///
+    /// * directory: ファイルを作成するディレクトリ。
+    /// * file_name_prefix: ファイル名の接頭語。
+    /// * max_count: 現在ログを出力しているファイルを除いて、保存するファイルの最大数。
+    /// * date: 日付(0時0分0秒に設定された`OffsetDateTime`)。
+    ///
+    /// # Returns
+    ///
+    /// `DailyRollingFileAppender`インスタンス。
     #[cfg(test)]
     fn new_test(
         max_count: usize,
         directory: impl AsRef<Path>,
         filename_prefix: impl AsRef<Path>,
-        date: Date,
+        date: OffsetDateTime,
     ) -> Self {
         let (state, writer) = Inner::new(date, max_count, directory, filename_prefix);
 
@@ -75,8 +87,15 @@ impl DailyRollingFileAppender {
 
 impl io::Write for DailyRollingFileAppender {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let today = today();
         let writer = self.writer.get_mut();
-        if let Some(today) = self.state.should_rollover() {
+        if let Some(current) = self.state.should_rollover() {
+            let _did_cas = self.state.advance_date(today, current);
+            debug_assert!(
+                _did_cas,
+                "if we have &mut access to the appender, \
+                no other thread can have advanced the timestamp..."
+            );
             self.state.refresh_writer(&today, writer);
         }
 
@@ -92,8 +111,11 @@ impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for DailyRollingFileApp
     type Writer = RollingWriter<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        if let Some(today) = self.state.should_rollover() {
-            self.state.refresh_writer(&today, &mut *self.writer.write());
+        let today = today();
+        if let Some(current) = self.state.should_rollover() {
+            if self.state.advance_date(today, current) {
+                self.state.refresh_writer(&today, &mut *self.writer.write());
+            }
         }
 
         RollingWriter(self.writer.read())
@@ -112,22 +134,26 @@ impl io::Write for RollingWriter<'_> {
 
 impl Inner {
     fn new(
-        today: Date,
+        today: OffsetDateTime,
         max_count: usize,
         directory: impl AsRef<Path>,
         filename_prefix: impl AsRef<Path>,
     ) -> (Self, RwLock<File>) {
+        let next_date = today + Duration::days(1);
+        let next_date = AtomicUsize::new(next_date.unix_timestamp() as usize);
+
         let directory = directory.as_ref().to_owned();
         let filename_prefix = filename_prefix.as_ref().to_str().unwrap().to_string();
+
         let writer = RwLock::new(
             create_writer(&directory, &filename_prefix, &today).expect("failed to create appender"),
         );
 
         let inner = Inner {
+            next_date,
+            max_count,
             directory,
             filename_prefix,
-            current_date: today,
-            max_count,
         };
 
         (inner, writer)
@@ -137,15 +163,41 @@ impl Inner {
     ///
     /// # 戻り値
     ///
-    /// ファイルをローテーションする必要がある場合は日付。必要ない場合はNone。
-    fn should_rollover(&self) -> Option<Date> {
+    /// ファイルをローテーションする必要がある場合は、現在設定されているファイルをローテーションする
+    /// 日付を示すUnixタイムスタンプ。ローテーションする必要がない場合はNone。
+    fn should_rollover(&self) -> Option<usize> {
+        let next_date = self.next_date.load(Ordering::Acquire);
         let today = today();
 
-        if self.current_date < today {
-            Some(today)
+        if next_date <= today.unix_timestamp() as usize {
+            Some(next_date)
         } else {
             None
         }
+    }
+
+    /// 次にファイルをローテーションする日付を示すUnixタイムスタンプを設定する。
+    ///
+    /// 現在持っている次にファイルをローテーションする日付を示すUnixタイムスタンプが、
+    /// 引数`current`と等しい場合、次にファイルをローテーションする時を示す
+    /// Unixタイムスタンプをできる。この場合、この関数は`true`を返却して、そうでない
+    /// 場合は、falseを返却する。
+    ///
+    /// # 引数
+    ///
+    /// - today: 次にファイルをローテーションする日付。
+    /// - current: 現在設定されていると考えられるファイルをローテーションする日付を示す
+    ///            Unixタイムスタンプ。
+    ///
+    /// # 戻り値
+    ///
+    /// 設定できた場合はtrue。設定に失敗した場合はfalse。
+    fn advance_date(&self, today: OffsetDateTime, current: usize) -> bool {
+        let next_date = today.unix_timestamp() as usize;
+
+        self.next_date
+            .compare_exchange(current, next_date, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 
     /// ログファイルを更新する。
@@ -154,7 +206,7 @@ impl Inner {
     ///
     /// - today: ファイルの日付。
     /// - file: ファイル。
-    fn refresh_writer(&self, today: &Date, file: &mut File) {
+    fn refresh_writer(&self, today: &OffsetDateTime, file: &mut File) {
         if let Err(err) = file.flush() {
             eprintln!("Couldn't flush previous writer: {}", err);
         }
@@ -173,8 +225,8 @@ impl Inner {
 
     /// 古いファイルを削除する。
     ///
-    /// ディレクトリに存在するログファイルを正規表現を利用して取得する。
-    /// 取得したフォルファイルをのファイル名をベクタに格納する。
+    /// 正規表現を使用して、ディレクトリに存在するログファイルを取得する。
+    /// 取得したログファイルのファイル名をベクタに格納する。
     /// その後、ベクタの要素をファイル名の昇順で並べ替える。
     /// ログファイルの書式から、過去のログファイルの順にログファイル名が並んでいるため、
     /// ベクタの先頭から保管するログファイルの数になるまで、ログファイルを削除する。
@@ -195,9 +247,9 @@ impl Inner {
             })
             .collect();
 
-        if self.max_count < targets.len() {
+        if self.max_count < targets.len() - 1 {
             targets.sort();
-            for target in &targets[..(targets.len() - self.max_count)] {
+            for target in &targets[..(targets.len() - (self.max_count + 1))] {
                 if let Err(err) = std::fs::remove_file(self.directory.join(target)) {
                     eprintln!("Couldn't remove log file: {}", err);
                 }
@@ -235,8 +287,7 @@ fn today() -> OffsetDateTime {
     let time = Time::from_hms(0, 0, 0)
         .expect("Invalid time; this is a bug in restricted-rolling-file-appender");
 
-    OffsetDateTime::now_utc()
-        .replace_time(time)
+    OffsetDateTime::now_utc().replace_time(time)
 }
 
 /// 日毎にローテーションするログファイルの名前を作成して、返却する。
@@ -251,7 +302,7 @@ fn today() -> OffsetDateTime {
 /// # 戻り値
 ///
 /// ログファイル名。
-fn create_daily_log_filename(filename_prefix: &str, date: &Date) -> String {
+fn create_daily_log_filename(filename_prefix: &str, date: &OffsetDateTime) -> String {
     let month: u8 = date.month().into();
 
     format!(
@@ -288,7 +339,11 @@ fn create_daily_log_path(directory: &Path, filename: &str) -> String {
 /// # 戻り値
 ///
 /// `File`インスタンス。
-fn create_writer(directory: &Path, filename_prefix: &str, date: &Date) -> io::Result<File> {
+fn create_writer(
+    directory: &Path,
+    filename_prefix: &str,
+    date: &OffsetDateTime,
+) -> io::Result<File> {
     let filename = create_daily_log_filename(filename_prefix, date);
     let path = create_daily_log_path(directory, &filename);
     let path = Path::new(&path);
@@ -310,7 +365,6 @@ fn create_writer(directory: &Path, filename_prefix: &str, date: &Date) -> io::Re
 mod tests {
     use super::*;
     use std::fs::DirEntry;
-    use time::format_description;
 
     #[test]
     fn test_is_log_file() {
@@ -343,11 +397,15 @@ mod tests {
     #[test]
     fn test_create_daily_log_filename() {
         let filename_prefix = "foo";
-        let today = "20220526";
-        let expected = format!("{}-{}.log", filename_prefix, today);
-
-        let format = format_description::parse("[year][month][day]").unwrap();
-        let date = Date::parse(&today, &format).unwrap();
+        let date = today();
+        let month: u8 = date.month().into();
+        let expected = format!(
+            "{}-{:04}{:02}{:02}.log",
+            filename_prefix,
+            date.year(),
+            month,
+            date.day()
+        );
 
         let path = create_daily_log_filename(filename_prefix, &date);
         assert_eq!(expected, path);
@@ -401,7 +459,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("failed to create temp dir");
         let filename_prefix = "foo";
         let today = today();
-        let yesterday = today.previous_day().unwrap();
+        let yesterday = today + Duration::days(-1);
         let mut appender =
             DailyRollingFileAppender::new_test(3, directory.path(), filename_prefix, yesterday);
 
@@ -447,7 +505,7 @@ mod tests {
         let mut date = today.clone();
         let log_names: Vec<String> = (0..10)
             .map(|_| {
-                date = date.previous_day().unwrap();
+                date = date + Duration::days(-1);
                 create_daily_log_filename(&prefix, &date)
             })
             .collect();
